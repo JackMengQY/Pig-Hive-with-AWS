@@ -1,0 +1,81 @@
+Details of how the project is done. Confidenntial information has been removed.
+
+1. Start a AWS EMR cluster with Hive, Pig, Haddop etc enabled
+2. Change the inbound rule to allow for connection
+3. Create & upload the data file to S3
+4. Make connections to the AWS ssh -i "key.pem" hadoop@ec2
+5. Creating pig script after made connection
+-- Load the data from HDFS
+online_retail = LOAD retail-dataset.csv' USING PigStorage(',')
+AS (
+  Invoice: chararray,
+  Stock: chararray,
+  Desc: chararray,
+  Quant: int,
+  InvoiceD: chararray,
+  UnitPrice: double,
+  Customer: chararray,
+  Country: chararray
+);
+
+-- Skip the header row
+online_retail_no_header = FILTER online_retail BY InvoiceNo != 'InvoiceNo';
+
+-- Filter the data
+filtered_data = FILTER online_retail_no_header BY (UnitPrice > 5.0) AND (Quantity < 10);
+
+-- Count the orders
+grouped_data = GROUP filtered_data ALL;
+order_count = FOREACH grouped_data GENERATE COUNT(filtered_data) AS order_count;
+
+-- Dump the result
+DUMP order_count;
+
+6. Run the pig script
+#!/bin/bash
+
+# Array to store execution times
+execution_times=()
+
+# Run the Pig script 10 times
+for i in {1..10}
+do
+  echo "Pig Run $i"
+  start_time=$(date +%s.%N)
+  pig -x local online_retail.pig
+  end_time=$(date +%s.%N)
+  elapsed_time=$(echo "$end_time - $start_time" | bc)
+  echo "Execution Time for Run $i: $elapsed_time seconds" | tee -a pig_times.txt
+  execution_times+=($elapsed_time)
+done
+
+# Calculate summary statistics
+mean=$(echo "${execution_times[@]}" | awk '{sum=0; for(i=1;i<=NF;i++) sum+=$i; print sum/NF}')
+min=$(echo "${execution_times[@]}" | awk 'BEGIN {min=9999999} {for(i=1;i<=NF;i++) if($i<min) min=$i} END {print min}')
+max=$(echo "${execution_times[@]}" | awk 'BEGIN {max=0} {for(i=1;i<=NF;i++) if($i>max) max=$i} END {print max}')
+stddev=$(echo "${execution_times[@]}" | awk '{sum=0; for(i=1;i<=NF;i++) sum+=$i; mean=sum/NF; sumsq=0; for(i=1;i<=NF;i++) sumsq+=($i-mean)^2; print sqrt(sumsq/NF)}')
+
+# Output summary statistics for runtime
+echo "Summary Statistics:" | tee -a pig_times.txt
+echo "Mean: $mean seconds" | tee -a pig_times.txt
+echo "Min: $min seconds" | tee -a pig_times.txt
+echo "Max: $max seconds" | tee -a pig_times.txt
+echo "Standard Deviation: $stddev seconds" | tee -a pig_times.txt
+
+7. Create Hive script
+cat <<EOF > run_hive.sh
+#!/bin/bash
+
+for i in {1..10}
+do
+  echo "Hive Run \$i"
+  { time hive -f hive_query.sql ; } 2>> hive_times.txt
+done
+EOF
+
+8. Run Hive script
+./run_hive.sh
+
+
+
+
